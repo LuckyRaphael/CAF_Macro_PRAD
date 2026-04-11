@@ -1,111 +1,103 @@
+################################################################################
+# Section 1: Environment Setup and Gene Set Preparation
+################################################################################
+
 rm(list = ls())
 gc()
-setwd('/home/w282308/JIC_PRAD/Fig_b/')
-#--------------------------B细胞亚群分析--------------------------
-library(Seurat)
-library(data.table)
-library(tibble)
+setwd('/home/w282308/JIC_PRAD/Fig8/')
+
+library(GSVA)
 library(ggplot2)
-## 读取B细胞注释结果
-scRNA <- qs::qread("../results/B_cell.qs") # 读取单细胞数据
-#--------------------------S10a B细胞亚群umap图--------------------------
-dim(scRNA)
-length(unique(scRNA$orig.ident))
-length(unique(scRNA$celltype))
-
-## 首先设置细胞身份标识
-Idents(scRNA) <- 'celltype' #!!!
-table(scRNA$celltype)
-
-## 定义颜色向量
-colors <- c('#eebad2','#d5adcf','#c4d691','#d1d2e9',
-            '#e8bf83','#b0c3e0','#5c2d8b','#187e8c','#64abc9','#ffca56','#de3935','#343031',
-            '#424b00','#376696','#a6cbaa','#273669','#a8bbd3','#407f31',"#9E9E9E","#D64550",
-            "#FF977E","#A43B76",
-            "#9A64A0","#750985",
-            "#5ECBC8", "#28788D", "#37A794", 
-            "#4C5D8A", "#039BE5", "#BF360C"
-)
-
-maincol <- colors[1:length(unique(scRNA$celltype))]
-
-dput(as.character(unique(scRNA$celltype)))
-# 将需要的颜色与celltype对应
-names(maincol) <- c("IgG_Plasma", "Naive_B", "Memory_B", "IgA_Plasma", "GC_B", 
-                    "Prolif_B")
-pdf(file = "./dimplot_Bsubtype.pdf", width = 8, height = 7)
-DimPlot(scRNA,label = TRUE,group.by = 'celltype', #!!!
-        cols = maincol, # 使用预定义颜色向量
-        pt.size = 1,
-        raster = FALSE,
-        reduction = "umap") +
-  NoAxes()  +           # 隐藏默认坐标轴标签和刻度线
-  labs(x = "UMAP1", y = "UMAP2", 
-       title = "B cell") +  # 修改labs标签
-  theme_dr(xlength = 0.2, # x轴箭头的长度比例
-           ylength = 0.2, # y轴箭头的长度比例
-           arrow = grid::arrow(length = unit(0.1, "inches"), # 箭头尺寸：0.1英寸
-                               type = "closed")) +  # 箭头类型：实心闭合箭头
-  # NoLegend() +  # 移除图例
-  theme(aspect.ratio = 1,  # 设置图形宽高比为1:1（正方形）
-        panel.grid = element_blank())
-dev.off()
-
-
-
-#--------------------------S10b B细胞亚群在不同分组间的比例饼图--------------------------
-# 加载必要的包
-library(ggplot2)
+library(ggpubr)
 library(dplyr)
-# 绘制数据集细胞数量比例饼图
-library(RColorBrewer)
-colnames(scRNA@meta.data)
-scRNA$tissue[is.na(scRNA$tissue)] <- "NA"
-scRNA$group <- scRNA$tissue
-table(scRNA$group)
-# 更简洁的版本
-groups <- unique(scRNA@meta.data$group)
-groups <- groups[groups != "NA"]
-groups <- groups[groups != "Noinfo"]
+library(data.table)
+library(stringr)
+library(patchwork)
 
-for (group_name in groups) {
-  # 筛选数据
-  group_data <- scRNA@meta.data %>% filter(group == group_name)
-  celltype_table <- table(group_data$celltype)
+# 1. Load and process Macrophage markers (Top 10)
+genesets_macro <- fread("../results/Mye_allmarkers.csv", data.table = FALSE) %>% 
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) %>%
+  select(gene, cluster)
+
+# 2. Load and process CAF markers (Top 100)
+genesets_fib <- fread("../results/CAF_allmarkers.csv", data.table = FALSE) %>% 
+  group_by(cluster) %>%
+  top_n(n = 100, wt = avg_log2FC) %>%
+  select(gene, cluster)
+
+# 3. Combine and Format for GSVA
+genesets_all <- rbind(genesets_macro, genesets_fib)
+genesets_list <- split(genesets_all$gene, genesets_all$cluster)
+
+# Sanitize names (replace special characters with underscores for compatibility)
+names(genesets_list) <- gsub("[-+]", "_", names(genesets_list))
+
+# Filter for specific sub-clusters of interest
+select_celltype <- c("POSTN_CAF", "Macro_APOE")
+genesets_filtered <- genesets_list[names(genesets_list) %in% select_celltype]
+
+################################################################################
+# Section 2: Batch Processing Multi-Cohort Correlation
+################################################################################
+
+# Identify all RData cohort files
+data_dir <- "../Fig2/otherbulk/"
+rdata_files <- list.files(path = data_dir, pattern = "\\.RData$", full.names = TRUE)
+
+plot_list <- list()
+
+# Loop through each cohort
+for (file in rdata_files) {
+  var_name <- sub("\\.RData$", "", basename(file))
+  message("Processing Cohort: ", var_name)
   
-  mynames <- names(celltype_table)
-  myratio <- as.numeric(celltype_table)
-  pielabel <- paste0(mynames, "(", round(myratio/sum(myratio)*100, 2), "%)")
-  current_maincol <- maincol[mynames]
+  # Load the expression matrix (assuming the object name matches the filename)
+  load(file)
+  exp_data <- get(var_name)
+  exp_data <- na.omit(exp_data)
   
-  # 保存PDF
-  pdf(paste0("S10b_pie_chart_", group_name, ".pdf"), width = 9, height = 7)
-  pie(myratio, labels = pielabel, radius = 1, clockwise = FALSE,
-      main = paste("", group_name), 
-      border = "white", col = current_maincol)
-  dev.off()
+  # Perform ssGSEA scoring
+  # Note: t(exp_data[, -c(1:2)]) assumes columns 1 and 2 are metadata (like Survival info)
+  GSVA_res <- gsva(expr = as.matrix(t(exp_data[, -c(1:2)])),
+                   gset.idx.list = genesets_filtered,
+                   method = "ssgsea",
+                   kcdf = "Gaussian",
+                   mx.diff = TRUE,
+                   parallel.sz = 15)
+  
+  df_plot <- as.data.frame(t(GSVA_res))
+  
+  # Generate Correlation Scatter Plot
+  p <- ggplot(df_plot, aes_string(x = select_celltype[1], y = select_celltype[2])) +
+    geom_point(color = "black", alpha = 0.6, size = 1.5) +
+    geom_smooth(method = "lm", se = TRUE, color = "darkred", fill = "pink", size = 1.2) +
+    stat_cor(method = "spearman", digits = 3, size = 4.5, label.sep = "\n") +
+    ggtitle(var_name) +
+    labs(x = paste(select_celltype[1], "Score"), 
+         y = paste(select_celltype[2], "Score")) +
+    theme_bw() +
+    theme(
+      panel.grid = element_blank(),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      axis.text = element_text(size = 10, color = "black"),
+      axis.title = element_text(size = 12, face = "bold")
+    )
+  
+  plot_list[[var_name]] <- p
 }
 
+################################################################################
+# Section 3: Final Composition and Export
+################################################################################
 
+# Arrange all cohort plots into a grid
+combined_plot <- wrap_plots(plot_list, ncol = 3) + 
+  plot_annotation(title = 'Correlation between POSTN+ CAF and APOE+ Macro across Cohorts',
+                  theme = theme(plot.title = element_text(size = 18, face = "bold", hjust = 0.5)))
 
+# Save the multi-panel plot
+ggsave('./multi_cohort_corplot.pdf', combined_plot, height = 10, width = 12)
 
-
-#--------------------------S10C B细胞亚群在不同样本中的桑基比例柱状图--------------------------
-## scRNAtoolVis
-library(scRNAtoolVis)
-colnames(scRNA@meta.data)
-p <- cellRatioPlot(object = scRNA,
-                   sample.name = "tissue", #!!!
-                   celltype.name = "celltype", 
-                   fill.col = maincol, # 修改颜色!!!
-                   flow.alpha = 0.25) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # 倾斜45度并右对齐
-p
-ggsave(filename = "./s10c2_tissueratio_barplot.pdf", p, width = 6, height = 6, dpi = 300) 
-dev.off()
-
-
-
-
-
-
+# Print to device
+print(combined_plot)
