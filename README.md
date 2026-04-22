@@ -1,3 +1,4 @@
 # CAF_Macro_PRAD
 
 We identified a distinct POSTN⁺ CAF subset that was progressively enriched in advanced disease. Trajectory analysis positioned POSTN⁺ CAFs as a progenitor-like state, giving rise to inflammatory or contractile subtypes, governed by a STAT1-centered regulatory program. POSTN⁺ CAFs created an extracellular matrix (ECM)-remodeled, immune-excluded niche, correlated with elevated T-cell exclusion scores. We further uncovered a privileged communication axis where POSTN⁺ CAFs selectively interacted with M2-polarized APOE⁺ macrophages via the MDK-NCL ligand-receptor pair. The co-occurrence of POSTN⁺ cancer-associated fibroblasts and APOE⁺ macrophages correlated with worse patient outcomes and diminished efficacy of anti-PD-L1 immunotherapy. Pan-cancer analysis confirmed the conserved enrichment and adverse prognostic impact of this stromal-immune axis.
+https://zenodo.org/records/19510933
